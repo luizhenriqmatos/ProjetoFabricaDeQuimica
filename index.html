@@ -1,0 +1,1384 @@
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ChemReport Pro</title>
+
+    <!-- Metatags para comportamento de App Nativo -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="ChemReport">
+    <link rel="apple-touch-icon" href="https://img.icons8.com/fluency/192/chemical-plant.png">
+
+    <!-- Link para o Manifesto PWA -->
+    <link rel="manifest" href="manifest.json">
+
+    <!-- CSS e Iconografia (pré-cacheados pelo Service Worker) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+    <!-- SDKs Core -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <!-- Sprint 1: Dexie.js — wrapper moderno para IndexedDB -->
+    <!-- Substitui o localStorage volátil por uma base de dados local robusta -->
+    <script src="https://unpkg.com/dexie/dist/dexie.js"></script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .hidden { display: none !important; }
+        /* Animação do ícone de sincronização pendente */
+        @keyframes pulse-ring {
+            0%   { opacity: 1; }
+            50%  { opacity: 0.4; }
+            100% { opacity: 1; }
+        }
+        .sync-pulse { animation: pulse-ring 1.5s ease-in-out infinite; }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+<!-- BANNER DE INSTALAÇÃO PWA -->
+<div id="pwa-install-banner" class="hidden bg-indigo-900 text-white px-4 py-3 flex justify-between items-center text-xs font-semibold z-50">
+    <div class="flex items-center gap-2">
+        <i class="fa-solid fa-mobile-screen-button text-base text-amber-400"></i>
+        <span>Instale o aplicativo ChemReport para acesso rápido e operação offline.</span>
+    </div>
+    <div class="flex items-center gap-2">
+        <button onclick="dismissInstallPrompt()" class="text-indigo-300 px-2 py-1">Agora não</button>
+        <button onclick="triggerInstallPrompt()" class="bg-amber-500 hover:bg-amber-600 text-slate-950 px-3 py-1 rounded">Instalar</button>
+    </div>
+</div>
+
+<!-- NOTIFICAÇÃO DE STATUS DE LIGAÇÃO -->
+<div id="network-alert" class="hidden bg-amber-500 text-slate-950 px-4 py-1.5 text-center text-xs font-bold uppercase tracking-wider z-50">
+    <i class="fa-solid fa-wifi-slash mr-1"></i> Modo Offline Ativo — Os dados serão guardados no dispositivo e sincronizados ao voltar a ligar
+</div>
+
+<!-- CABEÇALHO GLOBAL -->
+<header class="bg-slate-900 text-white shadow-md sticky top-0 z-40">
+    <div class="max-w-5xl mx-auto px-4 py-3.5 flex justify-between items-center">
+        <div class="flex items-center gap-2">
+            <i class="fa-solid fa-flask-vial text-indigo-400 text-lg"></i>
+            <h1 class="font-black text-sm tracking-wider uppercase">CHEM-REPORT <span class="text-indigo-400">PRO</span></h1>
+        </div>
+
+        <div id="user-nav" class="hidden flex items-center gap-3">
+            <div class="text-[11px] font-bold bg-slate-800 px-3 py-1.5 rounded-full border border-slate-700 flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                <span id="display-username">User</span>
+            </div>
+            <button onclick="logout()" class="text-xs text-red-400 hover:text-red-300 font-bold transition p-1">
+                <i class="fa-solid fa-power-off text-base"></i>
+            </button>
+        </div>
+    </div>
+</header>
+
+<!-- TELA 1: LOGIN SECURE COM SUPABASE AUTH -->
+<main id="view-login" class="flex-grow flex items-center justify-center p-4">
+    <div class="bg-white p-6 rounded-2xl shadow-xl border border-slate-100 max-w-sm w-full">
+        <div class="text-center mb-6">
+            <div class="bg-indigo-50 w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3">
+                <i class="fa-solid fa-shield-halved text-indigo-600 text-xl"></i>
+            </div>
+            <h2 class="text-xl font-extrabold text-slate-800">Controle de Acesso</h2>
+            <p class="text-xs text-slate-400 mt-1">Autenticação oficial segura com criptografia</p>
+        </div>
+
+        <form onsubmit="handleLogin(event)" class="space-y-4">
+            <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">E-mail de Acesso</label>
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <i class="fa-regular fa-envelope"></i>
+                    </span>
+                    <input type="email" id="login-email" required placeholder="operador@empresa.com"
+                           class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium">
+                </div>
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Senha de Segurança</label>
+                <div class="relative">
+                    <span class="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
+                        <i class="fa-solid fa-lock"></i>
+                    </span>
+                    <input type="password" id="login-password" required placeholder="••••••••"
+                           class="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium">
+                </div>
+            </div>
+            <button type="submit" id="login-btn"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-xl text-sm shadow-md transition flex justify-center items-center gap-2">
+                Autenticar <i class="fa-solid fa-key"></i>
+            </button>
+        </form>
+    </div>
+</main>
+
+<!-- TELA 2: FORMULÁRIO DO OPERADOR -->
+<main id="view-operator" class="hidden flex-grow max-w-3xl w-full mx-auto px-4 py-6">
+    <div class="flex justify-between items-center mb-5">
+        <div>
+            <h2 class="text-lg font-extrabold text-slate-800">Relatório Operacional</h2>
+            <p class="text-xs text-slate-400">Passagem de Turno de Alta Fidelidade</p>
+        </div>
+        <!-- Sprint 3: Indicador de status de sincronização (dinâmico) -->
+        <div id="save-status-indicator"
+             class="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-100 flex items-center gap-1.5">
+            <i class="fa-solid fa-cloud-check"></i> Sincronizado
+        </div>
+    </div>
+
+    <form id="operator-form" class="space-y-5">
+        <!-- IDENTIFICAÇÃO -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+            <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Data de Operação</label>
+                <input type="date" id="f-data" name="data" required
+                       class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Turno Operacional</label>
+                <select id="f-turno" name="turno" required
+                        class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium">
+                    <option value="">Selecione o turno...</option>
+                    <option value="Turno A">Turno A (07:00 - 15:00)</option>
+                    <option value="Turno B">Turno B (15:00 - 23:00)</option>
+                    <option value="Turno C">Turno C (23:00 - 07:00)</option>
+                </select>
+            </div>
+            <div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1.5">Responsável</label>
+                <input type="text" id="f-responsavel" name="responsavel" required placeholder="Nome do responsável"
+                       class="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none font-medium">
+            </div>
+        </div>
+
+        <!-- QSSMA: QUALIDADE, SAÚDE, SEGURANÇA E MEIO AMBIENTE -->
+        <div class="space-y-4">
+            <h3 class="text-xs font-black text-slate-400 uppercase tracking-wider pl-1 border-l-4 border-indigo-500">QSSMA — Qualidade, Saúde, Segurança e Meio Ambiente</h3>
+
+            <!-- QUALIDADE -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <h4 class="font-bold text-xs text-indigo-700 uppercase mb-2 flex items-center gap-1.5">
+                    <i class="fa-solid fa-vial-circle-check"></i> Qualidade (5S)
+                </h4>
+                <div class="grid grid-cols-3 gap-2 mb-3">
+                    <label class="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-lg cursor-pointer text-xs">
+                        <input type="checkbox" id="f-qLab" name="qLab" class="w-4 h-4 text-indigo-600 focus:ring-indigo-500 rounded">
+                        <span class="font-bold text-slate-700">Laboratório</span>
+                    </label>
+                    <label class="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-lg cursor-pointer text-xs">
+                        <input type="checkbox" id="f-qLiq" name="qLiq" class="w-4 h-4 text-indigo-600 focus:ring-indigo-500 rounded">
+                        <span class="font-bold text-slate-700">Líquido</span>
+                    </label>
+                    <label class="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-lg cursor-pointer text-xs">
+                        <input type="checkbox" id="f-qEmu" name="qEmu" class="w-4 h-4 text-indigo-600 focus:ring-indigo-500 rounded">
+                        <span class="font-bold text-slate-700">Emulsões</span>
+                    </label>
+                </div>
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Outros (Qualidade)</label>
+                <textarea id="f-obsQualidade" name="obsQualidade" rows="2"
+                          placeholder="Outras informações relacionadas à qualidade"
+                          class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
+            </div>
+
+            <!-- SAÚDE -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <h4 class="font-bold text-xs text-indigo-700 uppercase mb-2 flex items-center gap-1.5">
+                    <i class="fa-solid fa-heart-pulse"></i> Saúde
+                </h4>
+                <textarea id="f-obsSaude" name="obsSaude" rows="2"
+                          placeholder="Registos relacionados à saúde ocupacional"
+                          class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
+            </div>
+
+            <!-- MEIO AMBIENTE -->
+            <div class="bg-white rounded-xl border border-emerald-200 shadow-sm overflow-hidden">
+                <div class="bg-emerald-700 text-white px-4 py-3 flex items-center gap-2">
+                    <i class="fa-solid fa-leaf text-sm"></i>
+                    <h2 class="font-bold text-xs tracking-wider uppercase">Meio Ambiente</h2>
+                </div>
+                <div class="p-4 space-y-4">
+                    <div>
+                        <p class="text-[11px] font-bold text-slate-500 uppercase mb-2">Drenagens de diques e bacia (após análise):</p>
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+                            <label class="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-lg cursor-pointer text-xs">
+                                <input type="checkbox" id="f-bacia" name="bacia" class="w-4 h-4 text-emerald-600 focus:ring-emerald-500 rounded">
+                                <span class="font-bold text-slate-700">Bacia</span>
+                            </label>
+                            <label class="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-lg cursor-pointer text-xs">
+                                <input type="checkbox" id="f-dique1" name="dique1" class="w-4 h-4 text-emerald-600 focus:ring-emerald-500 rounded">
+                                <span class="font-bold text-slate-700">Dique 1</span>
+                            </label>
+                            <label class="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-lg cursor-pointer text-xs">
+                                <input type="checkbox" id="f-dique2" name="dique2" class="w-4 h-4 text-emerald-600 focus:ring-emerald-500 rounded">
+                                <span class="font-bold text-slate-700">Dique 2</span>
+                            </label>
+                            <label class="flex items-center gap-2 bg-slate-50 border border-slate-200 p-2 rounded-lg cursor-pointer text-xs">
+                                <input type="checkbox" id="f-dique3" name="dique3" class="w-4 h-4 text-emerald-600 focus:ring-emerald-500 rounded">
+                                <span class="font-bold text-slate-700">Dique 3</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="border-t border-slate-100 pt-3 grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div class="col-span-2 md:col-span-4">
+                            <p class="text-[11px] font-bold text-slate-500 uppercase">Tanque de Água Residual (EU)</p>
+                        </div>
+                        <div class="col-span-2 md:col-span-4">
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Logística solicitou borbulhamento do tanque EU (carregamento EU no dia seguinte)?</label>
+                            <select id="f-logisticaBorbulhamento" name="logisticaBorbulhamento"
+                                    class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500">
+                                <option value="">Opções...</option>
+                                <option value="Sim">Sim</option>
+                                <option value="Não">Não</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Nível Tanque EU (%)</label>
+                            <input type="text" id="f-nivelEU" name="nivelEU"
+                                   class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Hora Início Borbulhamento</label>
+                            <input type="time" id="f-horaIni" name="horaIni"
+                                   class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div>
+                            <label class="block text-[10px] font-bold text-slate-400 uppercase mb-1">Hora Fim Borbulhamento</label>
+                            <input type="time" id="f-horaFim" name="horaFim"
+                                   class="w-full bg-slate-50 border border-slate-200 rounded-lg px-2 py-1.5 text-xs focus:ring-2 focus:ring-emerald-500">
+                        </div>
+                        <div class="col-span-2 md:col-span-4">
+                            <p class="text-[10px] text-slate-400 italic">Obs: se nível menor que 90%, realizar borbulhamento com ar (máx. 15 min).</p>
+                        </div>
+                    </div>
+                    <div class="border-t border-slate-100 pt-3">
+                        <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Outras Observações (Meio Ambiente)</label>
+                        <textarea id="f-obsAmbiente" name="obsAmbiente" rows="2" placeholder="Registros ambientais"
+                                  class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SEGURANÇA OPERACIONAL (antes do Fluxo de Processo) -->
+            <div class="bg-white p-4 rounded-xl border border-red-100 shadow-xs">
+                <h4 class="font-bold text-xs text-red-700 uppercase mb-1 flex items-center gap-1.5">
+                    <i class="fa-solid fa-shield-halved"></i> Segurança Operacional
+                </h4>
+                <p class="text-[10px] text-slate-400 font-medium mb-3">Abertura/Fechamento das válvulas de ar de segurança</p>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                    <div class="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                        <p class="text-[10px] font-bold text-slate-500 uppercase mb-2 text-center">Abertura (antes da 1ª batelada da semana)</p>
+                        <div class="space-y-1.5">
+                            <label class="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">EM1: Feito? <input type="checkbox" id="f-em1Abertura" name="em1Abertura" class="w-4 h-4 text-red-600 focus:ring-red-500 rounded"></label>
+                            <label class="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">EM2: Feito? <input type="checkbox" id="f-em2Abertura" name="em2Abertura" class="w-4 h-4 text-red-600 focus:ring-red-500 rounded"></label>
+                            <label class="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">EM3: Feito? <input type="checkbox" id="f-em3Abertura" name="em3Abertura" class="w-4 h-4 text-red-600 focus:ring-red-500 rounded"></label>
+                            <label class="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">EM4: Feito? <input type="checkbox" id="f-em4Abertura" name="em4Abertura" class="w-4 h-4 text-red-600 focus:ring-red-500 rounded"></label>
+                        </div>
+                    </div>
+                    <div class="bg-slate-50 border border-slate-200 rounded-lg p-3">
+                        <p class="text-[10px] font-bold text-slate-500 uppercase mb-2 text-center">Fechamento (após última batelada da semana)</p>
+                        <div class="space-y-1.5">
+                            <label class="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">EM1: Feito? <input type="checkbox" id="f-em1Fechamento" name="em1Fechamento" class="w-4 h-4 text-red-600 focus:ring-red-500 rounded"></label>
+                            <label class="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">EM2: Feito? <input type="checkbox" id="f-em2Fechamento" name="em2Fechamento" class="w-4 h-4 text-red-600 focus:ring-red-500 rounded"></label>
+                            <label class="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">EM3: Feito? <input type="checkbox" id="f-em3Fechamento" name="em3Fechamento" class="w-4 h-4 text-red-600 focus:ring-red-500 rounded"></label>
+                            <label class="flex items-center justify-between gap-2 text-xs font-bold text-slate-700">EM4: Feito? <input type="checkbox" id="f-em4Fechamento" name="em4Fechamento" class="w-4 h-4 text-red-600 focus:ring-red-500 rounded"></label>
+                        </div>
+                    </div>
+                </div>
+
+                <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Outros / Riscos, incidentes ou desvios detectados</label>
+                <textarea id="f-obsSeguranca" name="obsSeguranca" rows="2"
+                          placeholder="Ex: Anomalias de pressão, uso inadequado de EPIs."
+                          class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-red-500 focus:outline-none"></textarea>
+            </div>
+
+            <!-- PROCESSO -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <h4 class="font-bold text-xs text-indigo-700 uppercase mb-2 flex items-center gap-1.5">
+                    <i class="fa-solid fa-gears"></i> Processo
+                </h4>
+                <textarea id="f-obsProcesso" name="obsProcesso" rows="4"
+                          placeholder="Ex: Quantidade de IBCs envasados, carregamentos, produções..."
+                          class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
+            </div>
+
+            <!-- MANUTENÇÃO -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <h4 class="font-bold text-xs text-indigo-700 uppercase mb-2 flex items-center gap-1.5">
+                    <i class="fa-solid fa-screwdriver-wrench"></i> Manutenção
+                </h4>
+                <textarea id="f-obsManutencao" name="obsManutencao" rows="4"
+                          placeholder="Ex: Intervenções, ordens de serviço, equipamentos parados..."
+                          class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
+            </div>
+
+            <!-- OUTROS ASSUNTOS -->
+            <div class="bg-white p-4 rounded-xl border border-slate-200 shadow-xs">
+                <h4 class="font-bold text-xs text-indigo-700 uppercase mb-2 flex items-center gap-1.5">
+                    <i class="fa-solid fa-circle-info"></i> Outros Assuntos
+                </h4>
+                <textarea id="f-obsOutros" name="obsOutros" rows="2"
+                          placeholder="Outras informações relevantes para o próximo turno"
+                          class="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:ring-2 focus:ring-indigo-500 focus:outline-none"></textarea>
+            </div>
+        </div>
+
+        <!-- Botões Operacionais -->
+        <div class="pt-4 border-t border-slate-200">
+            <button type="button" id="submit-btn" onclick="submitFinalReport()"
+                    class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3.5 px-6 rounded-xl text-xs shadow-md active:scale-95 transition flex items-center justify-center gap-2">
+                <i class="fa-solid fa-paper-plane"></i> Finalizar e Enviar Relatório
+            </button>
+        </div>
+    </form>
+</main>
+
+<!-- TELA 3: PAINEL DO SUPERVISOR -->
+<main id="view-supervisor" class="hidden flex-grow max-w-5xl w-full mx-auto px-4 py-6">
+    <div class="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-6">
+        <div>
+            <h2 class="text-xl font-extrabold text-slate-800">Painel de Supervisão</h2>
+            <p class="text-xs text-slate-400">Controle e auditoria integrada de processos</p>
+        </div>
+        <button onclick="fetchSupervisorReports()"
+                class="bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold py-2.5 px-4 rounded-lg shadow-sm active:scale-95 transition flex items-center justify-center gap-2">
+            <i class="fa-solid fa-rotate-right"></i> Atualizar Dados
+        </button>
+    </div>
+
+    <div class="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+                <thead>
+                    <tr class="bg-slate-50 text-slate-500 uppercase text-[9px] font-extrabold tracking-wider border-b border-slate-200">
+                        <th class="p-4">Data Envio</th>
+                        <th class="p-4">Operador</th>
+                        <th class="p-4">Turno</th>
+                        <th class="p-4">Status</th>
+                        <th class="p-4 text-right">Ações</th>
+                    </tr>
+                </thead>
+                <tbody id="supervisor-table-body" class="text-xs text-slate-700">
+                    <tr><td colspan="5" class="p-8 text-center text-slate-400">A buscar dados no Supabase...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</main>
+
+<!-- MODAL CUSTOMIZADO GERAL -->
+<div id="custom-modal" class="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center hidden z-50 p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full border border-slate-100 overflow-hidden transform scale-95 transition-all duration-300">
+        <div class="p-5 text-center">
+            <div id="modal-icon-container" class="w-14 h-14 rounded-full flex items-center justify-center mx-auto mb-3">
+                <i id="modal-icon" class="text-xl"></i>
+            </div>
+            <h3 id="modal-title" class="text-base font-bold text-slate-800">Mensagem</h3>
+            <p id="modal-message" class="text-xs text-slate-400 mt-2 whitespace-pre-line leading-relaxed">...</p>
+            <div id="modal-error-details" class="hidden mt-3 p-2 bg-red-50 border border-red-100 rounded text-left text-[10px] font-mono text-red-600 max-h-24 overflow-y-auto"></div>
+
+            <div id="modal-dynamic-actions" class="hidden mt-4">
+                <button id="modal-btn-download-pdf"
+                        class="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 px-4 rounded-xl text-xs transition flex items-center justify-center gap-2 shadow-md">
+                    <i class="fa-solid fa-file-pdf"></i> Exportar e Baixar PDF Agora
+                </button>
+            </div>
+        </div>
+        <div class="bg-slate-50 px-5 py-3 flex justify-end gap-2 border-t border-slate-200">
+            <button id="modal-btn-close" onclick="closeCustomModal()"
+                    class="bg-slate-800 hover:bg-slate-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition">
+                Fechar
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL DE PRÉ-VISUALIZAÇÃO COMPLETA DO RELATÓRIO (SUPERVISOR) -->
+<div id="preview-modal" class="fixed inset-0 bg-black/70 backdrop-blur-xs flex items-center justify-center hidden z-50 p-4">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-slate-200 overflow-hidden flex flex-col max-h-[90vh]">
+        <div class="bg-slate-900 text-white px-5 py-4 flex justify-between items-center">
+            <div class="flex items-center gap-2">
+                <i class="fa-solid fa-file-invoice text-indigo-400"></i>
+                <h3 class="font-bold text-sm tracking-wider uppercase">Ficha de Passagem de Turno</h3>
+            </div>
+            <button onclick="closePreviewModal()" class="text-slate-400 hover:text-white">
+                <i class="fa-solid fa-xmark text-lg"></i>
+            </button>
+        </div>
+
+        <div id="preview-modal-body" class="p-6 overflow-y-auto space-y-6 text-xs text-slate-700">
+            <!-- Conteúdo injetado via JS -->
+        </div>
+
+        <div class="bg-slate-50 px-5 py-4 border-t border-slate-200 flex justify-between items-center">
+            <button id="preview-pdf-btn"
+                    class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2 rounded-xl text-xs transition flex items-center gap-2">
+                <i class="fa-solid fa-file-pdf"></i> Exportar este PDF
+            </button>
+            <button onclick="closePreviewModal()"
+                    class="bg-slate-300 hover:bg-slate-400 text-slate-800 font-bold px-4 py-2 rounded-xl text-xs transition">
+                Fechar Painel
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+// =============================================================================
+// SPRINT 1: INICIALIZAÇÃO DO BANCO DE DADOS LOCAL (DEXIE / INDEXEDDB)
+// Substitui completamente o localStorage (síncrono e limitado a ~5MB)
+// por um banco relacional local com suporte a transações e queries assíncronas.
+// =============================================================================
+
+const db = new Dexie('ChemReportDB');
+
+db.version(1).stores({
+    // Fila de dados não enviados ao Supabase (inclui rascunhos e finalizados offline)
+    // Índices: id (primary key), username, status, updated_at (para queries eficientes)
+    relatorios_pendentes:     'id, username, status, updated_at',
+
+    // Arquivo local dos relatórios já sincronizados com a nuvem
+    // Permite leitura rápida sem chamadas de rede no modo supervisor offline
+    relatorios_sincronizados: 'id, username, status, updated_at'
+});
+
+// =============================================================================
+// CONFIGURAÇÃO SUPABASE
+// =============================================================================
+const SUPABASE_URL = "https://lzfwskhtgbbzgnwulixk.supabase.co";
+const SUPABASE_KEY = "sb_publishable_YrDPtMvX2HQ5VRDMeZr6JA_vxrtWkyC";
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// =============================================================================
+// ESTADO GLOBAL DA APLICAÇÃO
+// =============================================================================
+let currentSession      = null;
+let currentUserEmail    = null;
+let currentUserRole     = "operador"; // "operador" | "supervisor"
+let currentDraftId      = null;
+let autoSaveTimeout     = null;
+let lastSubmittedRecord = null;
+let deferredInstallPrompt = null;
+let activePreviewRecord = null;
+
+// =============================================================================
+// SPRINT 2: REGISTO DO SERVICE WORKER
+// =============================================================================
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js')
+            .then(reg => console.log('[App] Service Worker registado:', reg.scope))
+            .catch(err => console.warn('[App] Falha ao registar SW:', err));
+    });
+}
+
+// =============================================================================
+// SPRINT 2: LISTENER DE MENSAGENS DO SERVICE WORKER
+// O SW notifica a app quando uma sincronização em background termina
+// =============================================================================
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', async event => {
+        if (event.data?.type === 'SYNC_COMPLETE') {
+            console.log('[App] Sync em background concluído:', event.data);
+            await refreshSyncStatusIndicator();
+
+            if (event.data.synced > 0) {
+                showCustomAlert(
+                    'Sincronização Automática',
+                    `${event.data.synced} relatório(s) sincronizado(s) automaticamente ao restaurar a ligação.`,
+                    'success'
+                );
+            }
+        }
+    });
+}
+
+// =============================================================================
+// AUTENTICAÇÃO — monitorar sessão do Supabase
+// =============================================================================
+window.addEventListener('load', async () => {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    handleAuthChange(session);
+
+    supabaseClient.auth.onAuthStateChange((event, session) => {
+        // Sprint 3: se o token expirar offline, o sistema mantém os dados no
+        // IndexedDB e só exige re-login quando for necessário sincronizar
+        if (event === 'TOKEN_REFRESHED') {
+            console.log('[Auth] Token renovado automaticamente.');
+        }
+        handleAuthChange(session);
+    });
+
+    updateNetworkStatus();
+});
+
+function handleAuthChange(session) {
+    if (session) {
+        currentSession   = session;
+        currentUserEmail = session.user.email;
+        currentUserRole  = session.user.user_metadata?.role
+            || (currentUserEmail.includes('supervisor') ? 'supervisor' : 'operador');
+
+        document.getElementById('display-username').innerText = currentUserEmail;
+        document.getElementById('user-nav').classList.remove('hidden');
+        document.getElementById('view-login').classList.add('hidden');
+
+        if (currentUserRole === 'supervisor') {
+            document.getElementById('view-supervisor').classList.remove('hidden');
+            document.getElementById('view-operator').classList.add('hidden');
+            fetchSupervisorReports();
+        } else {
+            document.getElementById('view-operator').classList.remove('hidden');
+            document.getElementById('view-supervisor').classList.add('hidden');
+            initOperatorForm();
+        }
+    } else {
+        showLoginScreen();
+    }
+    updateNetworkStatus();
+}
+
+function showLoginScreen() {
+    document.getElementById('user-nav').classList.add('hidden');
+    document.getElementById('view-operator').classList.add('hidden');
+    document.getElementById('view-supervisor').classList.add('hidden');
+    document.getElementById('view-login').classList.remove('hidden');
+    document.getElementById('login-email').value    = '';
+    document.getElementById('login-password').value = '';
+}
+
+// =============================================================================
+// LOGIN
+// =============================================================================
+async function handleLogin(event) {
+    event.preventDefault();
+    const email    = document.getElementById('login-email').value;
+    const password = document.getElementById('login-password').value;
+    const btn      = document.getElementById('login-btn');
+
+    btn.disabled  = true;
+    btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Autenticando...`;
+
+    try {
+        const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (error) throw error;
+    } catch (err) {
+        showCustomAlert("Erro de Login", err.message || "Dados de acesso incorretos.", "error");
+    } finally {
+        btn.disabled  = false;
+        btn.innerHTML = `Autenticar <i class="fa-solid fa-key"></i>`;
+    }
+}
+
+async function logout() {
+    // Limpa apenas o rascunho local do utilizador (preserva finalizados pendentes)
+    if (currentUserEmail) {
+        await db.relatorios_pendentes
+            .where('username').equals(currentUserEmail)
+            .and(r => r.status === 'rascunho')
+            .delete();
+    }
+    await supabaseClient.auth.signOut();
+    currentUserEmail    = null;
+    currentUserRole     = "operador";
+    currentDraftId      = null;
+    lastSubmittedRecord = null;
+    document.getElementById('operator-form').reset();
+    showLoginScreen();
+}
+
+// =============================================================================
+// REDE — monitorar conectividade
+// =============================================================================
+window.addEventListener('online',  updateNetworkStatus);
+window.addEventListener('offline', updateNetworkStatus);
+
+async function updateNetworkStatus() {
+    const alertEl = document.getElementById('network-alert');
+    if (navigator.onLine) {
+        alertEl.classList.add('hidden');
+        // Tenta sincronizar dados pendentes quando a conexão volta
+        if (currentUserEmail && currentUserRole !== 'supervisor') {
+            await attemptOnlineSync();
+        }
+    } else {
+        alertEl.classList.remove('hidden');
+    }
+    await refreshSyncStatusIndicator();
+}
+
+// =============================================================================
+// SPRINT 2: REGISTO DE BACKGROUND SYNC
+// Registar a tag faz o browser executar syncPendingReports() no SW assim que
+// houver conectividade, mesmo que o utilizador já tenha fechado a app.
+// =============================================================================
+async function registerBackgroundSync() {
+    if ('serviceWorker' in navigator && 'SyncManager' in window) {
+        try {
+            const swReg = await navigator.serviceWorker.ready;
+            await swReg.sync.register('sync-relatorios');
+            console.log('[App] Background Sync "sync-relatorios" registado.');
+        } catch (err) {
+            console.warn('[App] Background Sync não suportado:', err);
+        }
+    }
+}
+
+// Sincronização directa (quando online no momento do envio)
+async function attemptOnlineSync() {
+    if (!currentUserEmail) return;
+
+    const pending = await db.relatorios_pendentes
+        .where('username').equals(currentUserEmail)
+        .and(r => r.status === 'finalizado')
+        .toArray();
+
+    if (pending.length === 0) return;
+
+    console.log(`[App] Tentando sync directo de ${pending.length} registo(s)...`);
+
+    for (const record of pending) {
+        try {
+            const { error } = await supabaseClient.from('relatorios_quimica').upsert(record);
+            if (error) throw error;
+            await db.relatorios_sincronizados.put(record);
+            await db.relatorios_pendentes.delete(record.id);
+        } catch (err) {
+            console.warn('[App] Falha no sync directo, Background Sync irá tentar novamente:', err.message);
+            await registerBackgroundSync();
+            break;
+        }
+    }
+
+    await refreshSyncStatusIndicator();
+}
+
+// =============================================================================
+// UTILITÁRIOS
+// =============================================================================
+function generateUUID() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+        const r = Math.random() * 16 | 0;
+        return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+}
+
+// =============================================================================
+// SPRINT 1: GESTÃO DE FORMULÁRIO COM INDEXEDDB
+// =============================================================================
+async function initOperatorForm() {
+    // Tenta carregar rascunho do IndexedDB (local, sem rede)
+    const draft = await db.relatorios_pendentes
+        .where('username').equals(currentUserEmail)
+        .and(r => r.status === 'rascunho')
+        .first();
+
+    if (draft) {
+        currentDraftId = draft.id;
+        populateForm(draft.form_data);
+        updateSaveIndicator('Rascunho recuperado', 'fa-database', 'text-emerald-700');
+    } else if (navigator.onLine) {
+        // Fallback: busca rascunho na nuvem (ex: trocou de dispositivo)
+        try {
+            const { data, error } = await supabaseClient
+                .from('relatorios_quimica')
+                .select('*')
+                .eq('username', currentUserEmail)
+                .eq('status', 'rascunho')
+                .order('updated_at', { ascending: false })
+                .limit(1);
+
+            if (!error && data?.length > 0) {
+                currentDraftId = data[0].id;
+                populateForm(data[0].form_data);
+                // Armazena localmente para uso offline futuro
+                await db.relatorios_pendentes.put(data[0]);
+                updateSaveIndicator('Rascunho da nuvem carregado', 'fa-cloud-arrow-down', 'text-emerald-700');
+            } else {
+                createNewDraft();
+            }
+        } catch { createNewDraft(); }
+    } else {
+        createNewDraft();
+    }
+
+    // Associar auto-save a todos os inputs do formulário
+    document.querySelectorAll('#operator-form input, #operator-form select, #operator-form textarea')
+        .forEach(input => {
+            input.addEventListener('input', () => {
+                updateSaveIndicator('Guardando...', 'fa-spinner fa-spin', 'text-amber-500');
+                clearTimeout(autoSaveTimeout);
+                autoSaveTimeout = setTimeout(triggerAutoSave, 1200);
+            });
+        });
+
+    await refreshSyncStatusIndicator();
+}
+
+function createNewDraft() {
+    currentDraftId = generateUUID();
+    document.getElementById('operator-form').reset();
+    document.getElementById('f-data').value = new Date().toISOString().split('T')[0];
+    updateSaveIndicator('Novo relatório', 'fa-file-lines', 'text-slate-500');
+}
+
+function extractFormData() {
+    const v = id => document.getElementById(id)?.value   || '';
+    const c = id => document.getElementById(id)?.checked || false;
+    return {
+        data: v('f-data'), turno: v('f-turno'), responsavel: v('f-responsavel'),
+        // Qualidade
+        qLab: c('f-qLab'), qLiq: c('f-qLiq'), qEmu: c('f-qEmu'),
+        obsQualidade: v('f-obsQualidade'),
+        // Saúde
+        obsSaude: v('f-obsSaude'),
+        // Meio Ambiente
+        bacia: c('f-bacia'), dique1: c('f-dique1'), dique2: c('f-dique2'), dique3: c('f-dique3'),
+        logisticaBorbulhamento: v('f-logisticaBorbulhamento'), nivelEU: v('f-nivelEU'),
+        horaIni: v('f-horaIni'), horaFim: v('f-horaFim'),
+        obsAmbiente: v('f-obsAmbiente'),
+        // Segurança Operacional
+        em1Abertura: c('f-em1Abertura'), em2Abertura: c('f-em2Abertura'),
+        em3Abertura: c('f-em3Abertura'), em4Abertura: c('f-em4Abertura'),
+        em1Fechamento: c('f-em1Fechamento'), em2Fechamento: c('f-em2Fechamento'),
+        em3Fechamento: c('f-em3Fechamento'), em4Fechamento: c('f-em4Fechamento'),
+        obsSeguranca: v('f-obsSeguranca'),
+        // Processo / Manutenção / Outros
+        obsProcesso: v('f-obsProcesso'),
+        obsManutencao: v('f-obsManutencao'),
+        obsOutros: v('f-obsOutros')
+    };
+}
+
+function populateForm(data) {
+    if (!data) return;
+    const setV = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.value   = val; };
+    const setC = (id, val) => { const el = document.getElementById(id); if (el && val !== undefined) el.checked = val; };
+
+    setV('f-data', data.data);         setV('f-turno', data.turno);
+    setV('f-responsavel', data.responsavel);
+    setC('f-qLab', data.qLab);         setC('f-qLiq', data.qLiq);
+    setC('f-qEmu', data.qEmu);         setV('f-obsQualidade', data.obsQualidade);
+    setV('f-obsSaude', data.obsSaude);
+    setC('f-bacia', data.bacia);       setC('f-dique1', data.dique1);
+    setC('f-dique2', data.dique2);     setC('f-dique3', data.dique3);
+    setV('f-logisticaBorbulhamento', data.logisticaBorbulhamento);
+    setV('f-nivelEU', data.nivelEU);   setV('f-horaIni', data.horaIni);
+    setV('f-horaFim', data.horaFim);   setV('f-obsAmbiente', data.obsAmbiente);
+    setC('f-em1Abertura', data.em1Abertura);   setC('f-em2Abertura', data.em2Abertura);
+    setC('f-em3Abertura', data.em3Abertura);   setC('f-em4Abertura', data.em4Abertura);
+    setC('f-em1Fechamento', data.em1Fechamento); setC('f-em2Fechamento', data.em2Fechamento);
+    setC('f-em3Fechamento', data.em3Fechamento); setC('f-em4Fechamento', data.em4Fechamento);
+    setV('f-obsSeguranca', data.obsSeguranca);
+    setV('f-obsProcesso', data.obsProcesso);
+    setV('f-obsManutencao', data.obsManutencao);
+    setV('f-obsOutros', data.obsOutros);
+}
+
+// =============================================================================
+// SPRINT 1: AUTO-SAVE NO INDEXEDDB (substitui localStorage)
+// =============================================================================
+async function triggerAutoSave() {
+    if (!currentUserEmail) return;
+
+    const payload   = extractFormData();
+    const draftRecord = {
+        id:         currentDraftId,
+        username:   currentUserEmail,
+        status:     'rascunho',
+        form_data:  payload,
+        updated_at: new Date().toISOString()
+    };
+
+    // Salva SEMPRE no IndexedDB primeiro (funciona offline, é atómico)
+    await db.relatorios_pendentes.put(draftRecord);
+
+    // Se online, sincroniza também com o Supabase para backup na nuvem
+    if (navigator.onLine) {
+        try {
+            await supabaseClient.from('relatorios_quimica').upsert(draftRecord);
+            updateSaveIndicator('Salvo na nuvem', 'fa-cloud-check', 'text-emerald-700');
+        } catch {
+            updateSaveIndicator('Salvo localmente', 'fa-database', 'text-amber-600');
+        }
+    } else {
+        updateSaveIndicator('Salvo localmente', 'fa-database', 'text-amber-600');
+    }
+}
+
+// =============================================================================
+// SPRINT 1 + 2: SUBMISSÃO FINAL COM FALLBACK OFFLINE
+// =============================================================================
+async function submitFinalReport() {
+    const dataVal  = document.getElementById('f-data').value;
+    const turnoVal = document.getElementById('f-turno').value;
+
+    if (!dataVal || !turnoVal) {
+        showCustomAlert("Campos Obrigatórios", "Indique a Data e o Turno para enviar.", "error");
+        return;
+    }
+
+    const btn     = document.getElementById('submit-btn');
+    btn.disabled  = true;
+    btn.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Enviando...`;
+
+    const payload = extractFormData();
+    const record  = {
+        id:         currentDraftId,
+        username:   currentUserEmail,
+        status:     'finalizado',
+        form_data:  payload,
+        updated_at: new Date().toISOString()
+    };
+
+    // PASSO 1: Sempre salva no IndexedDB como garantia de não perda de dados
+    await db.relatorios_pendentes.put(record);
+
+    if (navigator.onLine) {
+        try {
+            const { error } = await supabaseClient.from('relatorios_quimica').upsert(record);
+            if (error) throw error;
+
+            // Sucesso: move para sincronizados e limpa da fila de pendentes
+            await db.relatorios_sincronizados.put(record);
+            await db.relatorios_pendentes.delete(record.id);
+
+            lastSubmittedRecord = record;
+            showCustomAlert(
+                "Relatório Enviado",
+                "Dados salvos com sucesso na nuvem de forma oficial.",
+                "success", null, true
+            );
+            resetForm();
+        } catch (err) {
+            // Falha no envio online: mantém no IndexedDB, regista Background Sync
+            await registerBackgroundSync();
+            showCustomAlert(
+                "Guardado — Sincronização Pendente",
+                `O relatório foi guardado com segurança no dispositivo.\nSerá sincronizado automaticamente quando a ligação estiver estável.\n\nErro: ${err.message}`,
+                "warning"
+            );
+            resetForm();
+        }
+    } else {
+        // Sem internet: dados já estão no IndexedDB, regista Background Sync
+        await registerBackgroundSync();
+        showCustomAlert(
+            "Modo Offline — Relatório Guardado",
+            "Sem conexão à internet. O relatório foi guardado com segurança no dispositivo e será sincronizado automaticamente ao recuperar a ligação.",
+            "warning"
+        );
+        resetForm();
+    }
+
+    btn.disabled  = false;
+    btn.innerHTML = `<i class="fa-solid fa-paper-plane"></i> Finalizar e Enviar Relatório`;
+    await refreshSyncStatusIndicator();
+}
+
+function resetForm() {
+    currentDraftId = generateUUID();
+    document.getElementById('operator-form').reset();
+    document.getElementById('f-data').value = new Date().toISOString().split('T')[0];
+    updateSaveIndicator('Aguardando entrada', 'fa-clock', 'text-slate-500');
+}
+
+// =============================================================================
+// SPRINT 3: INDICADOR DE SYNC — 3 estados visuais distintos
+// Verde:    Online e sem pendentes
+// Âmbar:    Dados pendentes (offline ou falha de envio)
+// Cinzento: Offline sem pendentes
+// =============================================================================
+async function refreshSyncStatusIndicator() {
+    if (!currentUserEmail || currentUserRole === 'supervisor') return;
+
+    const pendingCount = await db.relatorios_pendentes
+        .where('username').equals(currentUserEmail)
+        .and(r => r.status === 'finalizado')
+        .count();
+
+    const el = document.getElementById('save-status-indicator');
+    if (!el) return;
+
+    if (pendingCount > 0) {
+        // Âmbar: há dados para sincronizar
+        el.className = 'text-[11px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-amber-700 bg-amber-50 border border-amber-200 sync-pulse';
+        el.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> ${pendingCount} pendente${pendingCount > 1 ? 's' : ''} p/ sync`;
+    } else if (navigator.onLine) {
+        // Verde: online e tudo sincronizado
+        el.className = 'text-[11px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-emerald-700 bg-emerald-50 border border-emerald-100';
+        el.innerHTML = `<i class="fa-solid fa-cloud-check"></i> Sincronizado`;
+    } else {
+        // Cinzento: offline mas sem dados pendentes
+        el.className = 'text-[11px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-slate-600 bg-slate-50 border border-slate-200';
+        el.innerHTML = `<i class="fa-solid fa-database"></i> Modo Offline`;
+    }
+}
+
+function updateSaveIndicator(text, icon, color) {
+    const el = document.getElementById('save-status-indicator');
+    if (el) {
+        el.className = `text-[11px] font-bold px-3 py-1.5 rounded-lg flex items-center gap-1.5 ${color} bg-white border border-slate-100 shadow-xs`;
+        el.innerHTML = `<i class="fa-solid ${icon}"></i> ${text}`;
+    }
+}
+
+// =============================================================================
+// SUPERVISOR: Visualização e Gestão de Dados
+// =============================================================================
+async function fetchSupervisorReports() {
+    const tbody = document.getElementById('supervisor-table-body');
+    tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-400"><i class="fa-solid fa-spinner fa-spin mr-2"></i> Atualizando base de dados...</td></tr>';
+
+    try {
+        const { data, error } = await supabaseClient
+            .from('relatorios_quimica')
+            .select('*')
+            .eq('status', 'finalizado')
+            .order('updated_at', { ascending: false });
+
+        if (error) throw error;
+
+        if (data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-slate-500">Nenhum relatório finalizado encontrado.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = '';
+        data.forEach(row => {
+            const tr      = document.createElement('tr');
+            tr.className  = 'border-b border-slate-100 hover:bg-slate-50 transition';
+            const dateStr = new Date(row.updated_at).toLocaleDateString('pt-PT', { hour: '2-digit', minute: '2-digit' });
+            const refDate = row.form_data?.data ? row.form_data.data.split('-').reverse().join('/') : 'N/D';
+
+            tr.innerHTML = `
+                <td class="p-4 font-mono text-[11px]">${dateStr}</td>
+                <td class="p-4 font-bold text-slate-800">${row.username.split('@')[0]}</td>
+                <td class="p-4">${row.form_data?.turno || '-'} <span class="text-[10px] text-slate-400 font-mono">(${refDate})</span></td>
+                <td class="p-4"><span class="bg-emerald-50 text-emerald-700 border border-emerald-100 px-2 py-0.5 rounded text-[10px] font-bold"><i class="fa-solid fa-cloud"></i> Salvo</span></td>
+                <td class="p-4 text-right flex justify-end gap-1.5">
+                    <button onclick='openPreviewModal(${JSON.stringify(row)})'
+                            class="bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 text-slate-700 border border-slate-200 px-2.5 py-1.5 rounded text-[10px] font-bold transition flex items-center gap-1">
+                        <i class="fa-solid fa-eye"></i> Visualizar
+                    </button>
+                    <button onclick='downloadDirectPDF(${JSON.stringify(row)})'
+                            class="bg-indigo-50 hover:bg-indigo-600 hover:text-white text-indigo-700 border border-indigo-200 px-2.5 py-1.5 rounded text-[10px] font-bold transition flex items-center gap-1">
+                        <i class="fa-solid fa-file-pdf"></i> PDF
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (err) {
+        tbody.innerHTML = '<tr><td colspan="5" class="p-8 text-center text-red-500">Erro de rede ao sincronizar.</td></tr>';
+    }
+}
+
+// =============================================================================
+// MODAL DE PRÉ-VISUALIZAÇÃO
+// =============================================================================
+function openPreviewModal(record) {
+    activePreviewRecord = record;
+    const body = document.getElementById('preview-modal-body');
+    const fd   = record.form_data || {};
+
+    const renderStatus = val => val
+        ? '<span class="text-emerald-600 font-bold"><i class="fa-solid fa-check-double"></i> Executado/Conformidade</span>'
+        : '<span class="text-slate-400"><i class="fa-regular fa-circle"></i> Não realizado</span>';
+
+    body.innerHTML = `
+        <div class="grid grid-cols-3 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
+            <div>
+                <p class="text-[10px] uppercase text-slate-400 font-bold">Operador (login)</p>
+                <p class="font-bold text-slate-800 text-sm mt-0.5">${record.username}</p>
+            </div>
+            <div>
+                <p class="text-[10px] uppercase text-slate-400 font-bold">Data / Turno</p>
+                <p class="font-bold text-slate-800 text-sm mt-0.5">${fd.data?.split('-').reverse().join('/') || 'N/A'} (${fd.turno || 'N/A'})</p>
+            </div>
+            <div>
+                <p class="text-[10px] uppercase text-slate-400 font-bold">Responsável</p>
+                <p class="font-bold text-slate-800 text-sm mt-0.5">${fd.responsavel || 'N/A'}</p>
+            </div>
+        </div>
+
+        <div class="space-y-4">
+            <div class="border border-slate-200 rounded-xl overflow-hidden">
+                <div class="bg-indigo-50 border-b border-slate-200 px-4 py-2.5 text-indigo-800 font-bold uppercase tracking-wider text-[10px]">
+                    1. Qualidade
+                </div>
+                <div class="p-4 space-y-3">
+                    <div class="grid grid-cols-3 gap-2">
+                        <div><p class="text-[10px] text-slate-400">Laboratório (5S)</p><p class="mt-0.5">${renderStatus(fd.qLab)}</p></div>
+                        <div><p class="text-[10px] text-slate-400">Líquido (5S)</p><p class="mt-0.5">${renderStatus(fd.qLiq)}</p></div>
+                        <div><p class="text-[10px] text-slate-400">Emulsões (5S)</p><p class="mt-0.5">${renderStatus(fd.qEmu)}</p></div>
+                    </div>
+                    <div class="border-t border-slate-100 pt-3">
+                        <p class="text-[10px] text-slate-400 uppercase font-bold">Outros (Qualidade)</p>
+                        <p class="bg-slate-50 p-2.5 rounded border border-slate-100 font-mono mt-1 whitespace-pre-wrap">${fd.obsQualidade || 'Parâmetros normais.'}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border border-slate-200 rounded-xl overflow-hidden">
+                <div class="bg-indigo-50 border-b border-slate-200 px-4 py-2.5 text-indigo-800 font-bold uppercase tracking-wider text-[10px]">
+                    2. Saúde
+                </div>
+                <div class="p-4">
+                    <p class="bg-slate-50 p-2.5 rounded border border-slate-100 font-mono whitespace-pre-wrap">${fd.obsSaude || 'Sem registos.'}</p>
+                </div>
+            </div>
+
+            <div class="border border-slate-200 rounded-xl overflow-hidden">
+                <div class="bg-emerald-50 border-b border-slate-200 px-4 py-2.5 text-emerald-800 font-bold uppercase tracking-wider text-[10px]">
+                    3. Meio Ambiente
+                </div>
+                <div class="p-4 space-y-3">
+                    <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div><p class="text-[10px] text-slate-400">Bacia</p><p class="mt-0.5">${renderStatus(fd.bacia)}</p></div>
+                        <div><p class="text-[10px] text-slate-400">Dique 1</p><p class="mt-0.5">${renderStatus(fd.dique1)}</p></div>
+                        <div><p class="text-[10px] text-slate-400">Dique 2</p><p class="mt-0.5">${renderStatus(fd.dique2)}</p></div>
+                        <div><p class="text-[10px] text-slate-400">Dique 3</p><p class="mt-0.5">${renderStatus(fd.dique3)}</p></div>
+                    </div>
+                    <div class="border-t border-slate-100 pt-3 grid grid-cols-2 sm:grid-cols-4 gap-2">
+                        <div class="col-span-2 sm:col-span-4"><p class="text-[10px] text-slate-400">Logística solicitou borbulhamento (EU)?</p><p class="font-bold text-slate-800 mt-0.5">${fd.logisticaBorbulhamento || 'Não Informado'}</p></div>
+                        <div><p class="text-[10px] text-slate-400">Nível do Tanque EU</p><p class="font-bold text-slate-800 mt-0.5">${fd.nivelEU ? fd.nivelEU + '%' : '-'}</p></div>
+                        <div><p class="text-[10px] text-slate-400">Hora Início</p><p class="font-mono mt-0.5">${fd.horaIni || '-'}</p></div>
+                        <div><p class="text-[10px] text-slate-400">Hora Fim</p><p class="font-mono mt-0.5">${fd.horaFim || '-'}</p></div>
+                    </div>
+                    <div class="border-t border-slate-100 pt-3">
+                        <p class="text-[10px] text-slate-400 uppercase font-bold">Outras Observações</p>
+                        <p class="bg-slate-50 p-2.5 rounded border border-slate-100 font-mono mt-1 whitespace-pre-wrap">${fd.obsAmbiente || 'Nenhum desvio relatado.'}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border border-slate-200 rounded-xl overflow-hidden">
+                <div class="bg-red-50 border-b border-slate-200 px-4 py-2.5 text-red-800 font-bold uppercase tracking-wider text-[10px]">
+                    4. Segurança Operacional
+                </div>
+                <div class="p-4 space-y-3">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                            <p class="text-[10px] text-slate-400 uppercase font-bold mb-1.5">Abertura (1ª batelada da semana)</p>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div><p class="text-[10px] text-slate-400">EM1</p><p class="mt-0.5">${renderStatus(fd.em1Abertura)}</p></div>
+                                <div><p class="text-[10px] text-slate-400">EM2</p><p class="mt-0.5">${renderStatus(fd.em2Abertura)}</p></div>
+                                <div><p class="text-[10px] text-slate-400">EM3</p><p class="mt-0.5">${renderStatus(fd.em3Abertura)}</p></div>
+                                <div><p class="text-[10px] text-slate-400">EM4</p><p class="mt-0.5">${renderStatus(fd.em4Abertura)}</p></div>
+                            </div>
+                        </div>
+                        <div>
+                            <p class="text-[10px] text-slate-400 uppercase font-bold mb-1.5">Fechamento (última batelada da semana)</p>
+                            <div class="grid grid-cols-2 gap-2">
+                                <div><p class="text-[10px] text-slate-400">EM1</p><p class="mt-0.5">${renderStatus(fd.em1Fechamento)}</p></div>
+                                <div><p class="text-[10px] text-slate-400">EM2</p><p class="mt-0.5">${renderStatus(fd.em2Fechamento)}</p></div>
+                                <div><p class="text-[10px] text-slate-400">EM3</p><p class="mt-0.5">${renderStatus(fd.em3Fechamento)}</p></div>
+                                <div><p class="text-[10px] text-slate-400">EM4</p><p class="mt-0.5">${renderStatus(fd.em4Fechamento)}</p></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="border-t border-slate-100 pt-3">
+                        <p class="text-[10px] text-slate-400 uppercase font-bold">Outros / Riscos, Incidentes ou Desvios</p>
+                        <p class="bg-slate-50 p-2.5 rounded border border-slate-100 font-mono mt-1 whitespace-pre-wrap text-red-700">${fd.obsSeguranca || 'Sem ocorrências.'}</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="border border-slate-200 rounded-xl overflow-hidden">
+                <div class="bg-indigo-50 border-b border-slate-200 px-4 py-2.5 text-indigo-800 font-bold uppercase tracking-wider text-[10px]">
+                    5. Processo
+                </div>
+                <div class="p-4">
+                    <p class="bg-slate-50 p-2.5 rounded border border-slate-100 font-mono whitespace-pre-wrap">${fd.obsProcesso || 'Nenhuma produção computada.'}</p>
+                </div>
+            </div>
+
+            <div class="border border-slate-200 rounded-xl overflow-hidden">
+                <div class="bg-indigo-50 border-b border-slate-200 px-4 py-2.5 text-indigo-800 font-bold uppercase tracking-wider text-[10px]">
+                    6. Manutenção
+                </div>
+                <div class="p-4">
+                    <p class="bg-slate-50 p-2.5 rounded border border-slate-100 font-mono whitespace-pre-wrap">${fd.obsManutencao || 'Nenhuma intervenção registada.'}</p>
+                </div>
+            </div>
+
+            <div class="border border-slate-200 rounded-xl overflow-hidden">
+                <div class="bg-indigo-50 border-b border-slate-200 px-4 py-2.5 text-indigo-800 font-bold uppercase tracking-wider text-[10px]">
+                    7. Outros Assuntos
+                </div>
+                <div class="p-4">
+                    <p class="bg-slate-50 p-2.5 rounded border border-slate-100 font-mono whitespace-pre-wrap">${fd.obsOutros || 'Nenhum.'}</p>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('preview-modal').classList.remove('hidden');
+
+    const pdfBtn  = document.getElementById('preview-pdf-btn');
+    const cleanBtn = pdfBtn.cloneNode(true);
+    pdfBtn.parentNode.replaceChild(cleanBtn, pdfBtn);
+    cleanBtn.addEventListener('click', () => generateTextPDF(record));
+}
+
+function closePreviewModal() {
+    document.getElementById('preview-modal').classList.add('hidden');
+    activePreviewRecord = null;
+}
+
+function downloadDirectPDF(record) {
+    generateTextPDF(record);
+}
+
+// =============================================================================
+// ALERTAS CUSTOMIZADOS
+// =============================================================================
+function showCustomAlert(title, message, type = "success", error = null, showPdf = false) {
+    const modal  = document.getElementById('custom-modal');
+    const iconC  = document.getElementById('modal-icon-container');
+    const icon   = document.getElementById('modal-icon');
+    const action = document.getElementById('modal-dynamic-actions');
+
+    document.getElementById('modal-title').innerText   = title;
+    document.getElementById('modal-message').innerText = message;
+
+    if (type === "success") {
+        iconC.className = "w-14 h-14 bg-emerald-50 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-3";
+        icon.className  = "fa-solid fa-circle-check text-xl";
+    } else if (type === "error") {
+        iconC.className = "w-14 h-14 bg-red-50 text-red-600 rounded-full flex items-center justify-center mx-auto mb-3";
+        icon.className  = "fa-solid fa-triangle-exclamation text-xl";
+    } else {
+        iconC.className = "w-14 h-14 bg-amber-50 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-3";
+        icon.className  = "fa-solid fa-cloud-arrow-up text-xl";
+    }
+
+    if (showPdf && lastSubmittedRecord) {
+        action.classList.remove('hidden');
+        const btn  = document.getElementById('modal-btn-download-pdf');
+        const nBtn = btn.cloneNode(true);
+        btn.parentNode.replaceChild(nBtn, btn);
+        nBtn.addEventListener('click', () => generateTextPDF(lastSubmittedRecord));
+    } else {
+        action.classList.add('hidden');
+    }
+
+    modal.classList.remove('hidden');
+}
+
+function closeCustomModal() {
+    document.getElementById('custom-modal').classList.add('hidden');
+}
+
+// =============================================================================
+// GERAÇÃO DE PDF (html2pdf.js — motor textual de alta resolução A4)
+// =============================================================================
+function generateTextPDF(dbRecord) {
+    const fd        = dbRecord.form_data || {};
+    const refDate   = fd.data ? fd.data.split('-').reverse().join('/') : 'N/D';
+    const timestamp = new Date().toLocaleString('pt-PT');
+
+    // Renderiza uma checkbox quadrada "[X]" / "[ ]" tal como no formulário em papel
+    const cb = (v, label) => `<span style="display:inline-block;white-space:nowrap;margin-right:10px;">${label ? label + ' ' : ''}<span style="display:inline-block;width:10px;height:10px;border:1px solid #000;text-align:center;line-height:9px;font-size:8px;font-weight:900;vertical-align:middle;">${v ? 'X' : ''}</span></span>`;
+
+    const sim  = fd.logisticaBorbulhamento === 'Sim';
+    const nao  = fd.logisticaBorbulhamento === 'Não';
+
+    const printHTML = `
+        <div style="font-family:Arial,Helvetica,sans-serif;color:#000;font-size:9px;line-height:1.4;padding:14px;background:white;">
+            <table style="width:100%;border-collapse:collapse;border:1.5px solid #000;table-layout:fixed;">
+                <colgroup><col style="width:34%"><col style="width:33%"><col style="width:33%"></colgroup>
+
+                <!-- CABEÇALHO -->
+                <tr>
+                    <td style="border:1px solid #000;padding:8px;text-align:center;vertical-align:middle;">
+                        <div style="font-size:22px;font-weight:900;color:#003a8c;letter-spacing:2px;line-height:1;">SNF</div>
+                        <div style="font-size:7px;font-weight:700;letter-spacing:4px;color:#003a8c;margin-top:2px;">WATER SCIENCE</div>
+                    </td>
+                    <td colspan="2" style="border:1px solid #000;padding:8px;text-align:center;vertical-align:middle;">
+                        <span style="font-size:13px;font-weight:900;text-transform:uppercase;">Relatório de Turno - Produção</span>
+                    </td>
+                </tr>
+
+                <!-- DATA / TURNO / RESPONSÁVEL -->
+                <tr>
+                    <td style="border:1px solid #000;padding:5px 8px;"><strong>DATA:</strong> ${refDate}</td>
+                    <td style="border:1px solid #000;padding:5px 8px;"><strong>TURNO:</strong> ${fd.turno || ''}</td>
+                    <td style="border:1px solid #000;padding:5px 8px;"><strong>RESPONSÁVEL:</strong> ${fd.responsavel || ''}</td>
+                </tr>
+
+                <!-- BARRA QSSMA -->
+                <tr>
+                    <td colspan="3" style="border:1px solid #000;padding:5px;text-align:center;font-weight:900;background:#dde6f2;letter-spacing:0.5px;">
+                        QSSMA - QUALIDADE, SAÚDE, SEGURANÇA E MEIO AMBIENTE
+                    </td>
+                </tr>
+
+                <!-- DUAS COLUNAS: ESQUERDA / DIREITA -->
+                <tr>
+                    <td colspan="3" style="border:1px solid #000;padding:0;">
+                        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+                            <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                            <tr>
+                                <!-- ===== COLUNA ESQUERDA ===== -->
+                                <td style="border-right:1px solid #000;padding:8px;vertical-align:top;">
+
+                                    <!-- QUALIDADE -->
+                                    <div style="font-weight:900;text-decoration:underline;margin-bottom:4px;">Qualidade</div>
+                                    <div style="margin-bottom:4px;"><strong>5S:</strong></div>
+                                    <table style="width:100%;border-collapse:collapse;margin-bottom:6px;">
+                                        <tr>
+                                            <td style="border:1px solid #94a3b8;padding:3px 5px;width:34%;">${cb(fd.qLab, 'Laboratório')}</td>
+                                            <td style="border:1px solid #94a3b8;padding:3px 5px;width:33%;">${cb(fd.qLiq, 'Líquidos')}</td>
+                                            <td style="border:1px solid #94a3b8;padding:3px 5px;width:33%;">${cb(fd.qEmu, 'Emulsões')}</td>
+                                        </tr>
+                                    </table>
+                                    <div style="margin-bottom:2px;"><strong>Outros:</strong></div>
+                                    <div style="border:1px solid #94a3b8;min-height:32px;padding:4px;white-space:pre-wrap;font-family:monospace;margin-bottom:10px;">${fd.obsQualidade || ''}</div>
+
+                                    <!-- SAÚDE -->
+                                    <div style="font-weight:900;text-decoration:underline;margin-bottom:4px;">Saúde</div>
+                                    <div style="border:1px solid #94a3b8;min-height:38px;padding:4px;white-space:pre-wrap;font-family:monospace;margin-bottom:10px;">${fd.obsSaude || ''}</div>
+
+                                    <!-- SEGURANÇA -->
+                                    <div style="font-weight:900;text-decoration:underline;margin-bottom:4px;">Segurança</div>
+                                    <table style="width:100%;border-collapse:collapse;margin-bottom:4px;">
+                                        <tr>
+                                            <td style="border:1px solid #94a3b8;padding:4px;width:50%;font-size:7.5px;font-weight:700;text-align:center;">Abertura das válvulas de Ar de segurança<br/>(antes da 1ª batelada da semana)</td>
+                                            <td style="border:1px solid #94a3b8;padding:4px;width:50%;font-size:7.5px;font-weight:700;text-align:center;">Fechamento das válvulas de Ar de segurança<br/>(após última batelada da semana)</td>
+                                        </tr>
+                                        <tr>
+                                            <td style="border:1px solid #94a3b8;padding:4px;vertical-align:top;">
+                                                <div style="margin-bottom:2px;">${cb(fd.em1Abertura, 'EM1: Feito?')}</div>
+                                                <div style="margin-bottom:2px;">${cb(fd.em2Abertura, 'EM2: Feito?')}</div>
+                                                <div style="margin-bottom:2px;">${cb(fd.em3Abertura, 'EM3: Feito?')}</div>
+                                                <div>${cb(fd.em4Abertura, 'EM4: Feito?')}</div>
+                                            </td>
+                                            <td style="border:1px solid #94a3b8;padding:4px;vertical-align:top;">
+                                                <div style="margin-bottom:2px;">${cb(fd.em1Fechamento, 'EM1: Feito?')}</div>
+                                                <div style="margin-bottom:2px;">${cb(fd.em2Fechamento, 'EM2: Feito?')}</div>
+                                                <div style="margin-bottom:2px;">${cb(fd.em3Fechamento, 'EM3: Feito?')}</div>
+                                                <div>${cb(fd.em4Fechamento, 'EM4: Feito?')}</div>
+                                            </td>
+                                        </tr>
+                                    </table>
+                                    <div style="margin-bottom:2px;"><strong>Outros:</strong></div>
+                                    <div style="border:1px solid #94a3b8;min-height:32px;padding:4px;white-space:pre-wrap;font-family:monospace;">${fd.obsSeguranca || ''}</div>
+                                </td>
+
+                                <!-- ===== COLUNA DIREITA ===== -->
+                                <td style="padding:8px;vertical-align:top;">
+
+                                    <!-- MEIO AMBIENTE -->
+                                    <div style="font-weight:900;text-decoration:underline;margin-bottom:4px;">Meio Ambiente</div>
+                                    <div style="margin-bottom:4px;"><strong>Drenagens de diques e bacia (após análise):</strong></div>
+                                    <table style="width:100%;border-collapse:collapse;margin-bottom:10px;">
+                                        <tr>
+                                            <td style="border:1px solid #94a3b8;padding:3px 5px;">${cb(fd.bacia, 'Bacia')}</td>
+                                            <td style="border:1px solid #94a3b8;padding:3px 5px;">${cb(fd.dique1, 'Dique 1')}</td>
+                                            <td style="border:1px solid #94a3b8;padding:3px 5px;">${cb(fd.dique2, 'Dique 2')}</td>
+                                            <td style="border:1px solid #94a3b8;padding:3px 5px;">${cb(fd.dique3, 'Dique 3')}</td>
+                                        </tr>
+                                    </table>
+
+                                    <!-- TANQUE EU -->
+                                    <div style="font-weight:900;text-decoration:underline;margin-bottom:4px;">Tanque de Água Residual (EU)</div>
+                                    <div style="margin-bottom:4px;">Logística solicitou borbulhamento do tanque EU (carregamento EU no dia seguinte)?</div>
+                                    <div style="margin-bottom:6px;">${cb(sim, 'SIM')} ${cb(nao, 'NÃO')}</div>
+                                    <div style="font-style:italic;margin-bottom:4px;">Se sim, preencha abaixo:</div>
+                                    <div style="margin-bottom:4px;"><strong>Nível do tanque EU:</strong> ${fd.nivelEU ? fd.nivelEU + ' %' : '_______ %'}</div>
+                                    <div style="font-style:italic;margin-bottom:4px;">Se nível menor que 90% realizar borbulhamento com ar.</div>
+                                    <div style="margin-bottom:4px;"><strong>Horário Inicial do borbulhamento:</strong> ${fd.horaIni || '-- : --'}</div>
+                                    <div style="margin-bottom:4px;"><strong>Horário Final do borbulhamento:</strong> ${fd.horaFim || '-- : --'}</div>
+                                    <div style="font-style:italic;margin-bottom:6px;">Obs: Borbulhamento deve ser de 15 min. no máximo!</div>
+                                    <div style="margin-bottom:2px;"><strong>Outros:</strong></div>
+                                    <div style="border:1px solid #94a3b8;min-height:55px;padding:4px;white-space:pre-wrap;font-family:monospace;">${fd.obsAmbiente || ''}</div>
+                                </td>
+                            </tr>
+                        </table>
+                    </td>
+                </tr>
+
+                <!-- PROCESSO -->
+                <tr>
+                    <td colspan="3" style="border:1px solid #000;padding:0;">
+                        <div style="background:#dde6f2;font-weight:900;text-align:center;padding:4px;border-bottom:1px solid #000;text-transform:uppercase;letter-spacing:0.5px;">Processo</div>
+                        <div style="padding:8px;min-height:60px;white-space:pre-wrap;font-family:monospace;">${fd.obsProcesso || ''}</div>
+                    </td>
+                </tr>
+
+                <!-- MANUTENÇÃO -->
+                <tr>
+                    <td colspan="3" style="border:1px solid #000;padding:0;">
+                        <div style="background:#dde6f2;font-weight:900;text-align:center;padding:4px;border-bottom:1px solid #000;text-transform:uppercase;letter-spacing:0.5px;">Manutenção</div>
+                        <div style="padding:8px;min-height:60px;white-space:pre-wrap;font-family:monospace;">${fd.obsManutencao || ''}</div>
+                    </td>
+                </tr>
+
+                <!-- OUTROS ASSUNTOS -->
+                <tr>
+                    <td colspan="3" style="border:1px solid #000;padding:0;">
+                        <div style="background:#dde6f2;font-weight:900;text-align:center;padding:4px;border-bottom:1px solid #000;text-transform:uppercase;letter-spacing:0.5px;">Outros Assuntos</div>
+                        <div style="padding:8px;min-height:40px;white-space:pre-wrap;font-family:monospace;">${fd.obsOutros || ''}</div>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- RODAPÉ -->
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;margin-top:6px;font-size:7.5px;color:#475569;">
+                <div>Emitido digitalmente por <strong>${dbRecord.username}</strong> em ${timestamp} &nbsp;|&nbsp; UUID: ${dbRecord.id}</div>
+                <div style="font-weight:700;white-space:nowrap;">SUP Nº PE:B0003-BRA &nbsp; REV:02 &nbsp; PÁG:1/1</div>
+            </div>
+        </div>
+    `;
+
+    const options = {
+        margin:      6,
+        filename:    `FT_${refDate.replace(/\//g, '')}_${dbRecord.username.split('@')[0]}.pdf`,
+        image:       { type: 'jpeg', quality: 1.0 },
+        html2canvas: { scale: 2, useCORS: true, letterRendering: true },
+        jsPDF:       { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(options).from(printHTML).save().catch(err => {
+        console.error('[PDF] Erro interno:', err);
+        alert('Falha ao gerar documento PDF neste dispositivo.');
+    });
+}
+
+// =============================================================================
+// PWA INSTALL PROMPT
+// =============================================================================
+window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    document.getElementById('pwa-install-banner').classList.remove('hidden');
+});
+
+function triggerInstallPrompt() {
+    if (deferredInstallPrompt) {
+        deferredInstallPrompt.prompt();
+        deferredInstallPrompt.userChoice.then(() => {
+            deferredInstallPrompt = null;
+            document.getElementById('pwa-install-banner').classList.add('hidden');
+        });
+    }
+}
+
+function dismissInstallPrompt() {
+    document.getElementById('pwa-install-banner').classList.add('hidden');
+}
+</script>
+</body>
+</html>
